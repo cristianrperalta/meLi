@@ -1,30 +1,45 @@
-const fs = require('fs');
-const path = require('path');
+// ******** Sequelize ***********
 
-const productsFilePath = path.join(__dirname, '../data/productsDataBase.json');
-const products = JSON.parse(fs.readFileSync(productsFilePath, 'utf-8'));
+const { Product, Sequelize, Brand, Category } = require('../../database/models');
+const Op = Sequelize.Op;
 
-const toThousand = n => n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+module.exports = {
+	index (req, res){
 
-const controller = {
-	index: (req, res) => {
-		let listOfVisitedProducts = products.filter(function(product){
-			if(product.category == 'visited'){
-				product.price = toThousand(product.price - (product.price * product.discount / 100))
-				return true}})
+		const ultimos = Product.findAll({
+			order: [
+				['createdAt', 'DESC']
+			],
+			limit: 8
+		});
 		
-		let listOfInSaleProducts = products.filter(function(product){
-			if(product.category == 'in-sale'){
-				product.price = toThousand(product.price - (product.price * product.discount / 100))
-				return true}})
-		
-		let listProducts = {'visited' : listOfVisitedProducts,
-							'inSale' : listOfInSaleProducts}
-		res.render('index', {listProducts : listProducts})
+		const inSale = Product.findAll({
+			where: {
+				discount: {
+					[Op.gt]: 0
+				}
+			},
+			limit: 8
+		});
+
+		Promise.all([ultimos, inSale])
+			.then(([ultimos, inSale]) => res.render('index', { ultimos, inSale: inSale.sort(() => Math.random() - 0.5) }))
+			.catch(e => console.log(e));
+
 	},
-	search: (req, res) => {
-		res.render('results')
-	},
+
+	// Ejemplo con async / await
+	async search (req, res) {
+
+		let products = await Product.findAll({
+			where: {
+				name: {
+					[Op.substring]: req.query.search
+				}
+			},
+			limit: 12
+		});
+
+		return res.render('results', { products: products.sort(() => Math.random() - 0.5), search: req.query.search })
+	}
 };
-
-module.exports = controller;

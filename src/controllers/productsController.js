@@ -1,98 +1,186 @@
-const fs = require('fs');
-const path = require('path');
+const { validationResult } = require('express-validator');
+const createError = require('http-errors');
 
-const productsFilePath = path.join(__dirname, '../data/productsDataBase.json');
-const products = JSON.parse(fs.readFileSync(productsFilePath, 'utf-8'));
+// ******** Sequelize ***********
 
-const toThousand = n => n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+const { Product, Brand, Category } = require("../../database/models")
 
-const controller = {
+module.exports = {
+	
 	// Root - Show all products
-	index: (req, res) => {
-		res.render('products', {listProducts : products})
+	async index (req, res, next) {
+
+		if(Number(req.params.page)){
+			let products = await Product.findAll({
+				limit: 4,
+				offset: (req.params.page - 1) * 4
+			})
+			
+			let nextProducts = await Product.findAll({
+				limit: 4,
+				offset: req.params.page * 4
+			});
+			if(products.length > 0){
+				return res.render('products/products', { products, nextProducts, page: req.params.page})
+			}
+			return next(createError(404))
+		} else {
+			// return res.status(500).send('Something broke! :(')
+			return next(createError(404))
+		}
+		
 	},
+
 	// Detail - Detail from one product
-	detail: (req, res) => {
-		let product = []
-		product = products.filter(function(productElement){
-			if(productElement.id == req.params.id){
-				productElement["finalPrice"] = toThousand(productElement.price - (productElement.price * productElement.discount / 100))
-				return true}
-		})
-		res.render('detail', {productDetail : product[0]})
+	detail (req, res) {
+		Product.findByPk(req.params.id)
+			.then(product => res.render('products/detail', { product }))
+			.catch(e => console.log(e));
 	},
 
 	// Create - Form to create
-	create: (req, res) => {
-		res.render('product-create-form')
+	create (req, res) {
+		const categories = Category.findAll();
+		const brands = Brand.findAll();
+
+		Promise.all([categories, brands])
+			.then(([categories, brands]) => res.render('products/product-create-form', { categories, brands }))
+			.catch(e => console.log(e));
 	},
 	
 	// Create -  Method to store
-	store: (req, res) => {
-		let productsFile = JSON.parse(fs.readFileSync(productsFilePath, 'utf-8'));
-		let newProductID = products[products.length-1].id + 1
-		const newProduct = {
-			id: newProductID,
-			name: req.body.name,
-			price: parseFloat(req.body.price),
-			discount: parseFloat(req.body.discount),
-			category: req.body.category,
-			description: req.body.description,
-			Image: ""
+	store (req, res) {
+
+		const errors = validationResult(req);
+
+		if(errors.isEmpty()){
+			const _body = req.body;
+			_body.price = Number(req.body.price);
+			_body.discount = Number(req.body.discount);
+			_body.image = req.file.filename;
+			_body.userId = req.session.user.id;
+			_body.categoryId = Number(req.body.category);
+			_body.brandId = Number(req.body.brand);
+
+			Product.create(_body)
+				.then(product => {
+
+					return res.redirect(`/products/detail/${product.id}`)
+				})
+				.catch(e => console.log(e));
+		} else {
+			const categories = Category.findAll();
+			const brands = Brand.findAll();
+
+			Promise.all([categories, brands])
+				.then(([categories, brands]) => res.render('products/product-create-form', { categories, brands, errors: errors.mapped(), old: req.body }))
+				.catch(e => console.log(e));
 		}
-		productsFile.push(newProduct)
-		productsFile = JSON.stringify(productsFile)
-		fs.writeFileSync(productsFilePath, productsFile)
-		newProduct["finalPrice"] = toThousand(newProduct.price - (newProduct.price * newProduct.discount / 100))
-		res.render('detail', {productDetail : newProduct})
+
 	},
 
 	// Update - Form to edit
-	edit: (req, res) => {
-		let product = []
-		product = products.filter(function(productElement){
-			if(productElement.id == req.params.id){
-				productElement["finalPrice"] = toThousand(productElement.price - (productElement.price * productElement.discount / 100))
-				return true}
-		})
-		//let idUser = req.params.idUser
-		res.render('product-edit-form', {productEditing : product[0]})
+	edit (req, res) {
+		const product = Product.findByPk(req.params.id);
+		const categories = Category.findAll();
+		const brands = Brand.findAll();
+
+		Promise.all([product, categories, brands])
+			.then(([product, categories, brands]) => res.render('products/product-edit-form', { product, categories, brands }))
+			.catch(e => console.log(e));
 	},
 	// Update - Method to update
-	update: (req, res) => {
-		//Leo el archivo en nuevo array
-		let productsEdited = JSON.parse(fs.readFileSync(productsFilePath, 'utf-8'));
-		let productEdited = {}
-		productsEdited = productsEdited.map(function(productElement){
-			if(productElement.id == req.params.id){
-				if(req.body.name != ''){productElement.name = req.body.name}
-				if(req.body.description != ''){productElement.description = req.body.description}
-				if(req.body.price != ''){productElement.price = parseFloat(req.body.price)}
-				if(req.body.discount != ''){productElement.discount = parseFloat(req.body.discount)}
-				productElement.image = ''
-				if(req.body.category != ''){productElement.category = req.body.category}
-			}
-			productEdited = productElement
-			return productElement
-		})
-		productsEdited = JSON.stringify(productsEdited)
-		fs.writeFileSync(productsFilePath, productsEdited)
-		productEdited["finalPrice"] = toThousand(productEdited.price - (productEdited.price * productEdited.discount / 100))
-		res.render('detail', {productDetail : productEdited})
+	update (req, res) {
+
+		const errors = validationResult(req);
+
+		if (errors.isEmpty()) {
+
+			Product.findByPk(req.params.id)
+				.then(product => {
+
+					const _body = req.body;
+
+					_body.price = Number(req.body.price);
+					_body.discount = Number(req.body.discount);
+					_body.image = req.file != undefined ? req.file.filename : product.image;
+					_body.userId = req.session.user.id;
+					_body.categoryId = Number(req.body.category);
+					_body.brandId = Number(req.body.brand);
+					// delete _body.brand;
+					// delete _body.category;
+
+					return Product.update(_body, {
+						where: {
+							id: req.params.id
+						}
+					})
+				})
+				.then(confirm => res.redirect(`/products/detail/${req.params.id}`))
+				.catch(e => console.log(e));
+
+		} else {
+			const categories = Category.findAll();
+			const brands = Brand.findAll();
+
+			console.log(req.body)
+	
+			Promise.all([categories, brands])
+				.then(([categories, brands]) => {
+					
+					return res.render(
+						'products/product-edit-form',
+						{ 
+							product: req.body,
+							id: req.params.id,
+							categories,
+							brands,
+							errors: errors.mapped()
+					})
+				})
+				.catch(e => console.log(e));
+		}
 	},
 
 	// Delete - Delete one product from DB
-
-	// revisar el destroy. le falta.
-	destroy : (req, res) => {
-		let productsRemaining = []
-		productsRemaining = products.filter(function(productElement){
-			if(productElement.id != req.params.id){return true}else{return false}
+	destroy (req, res) {
+		Product.destroy({
+			where: {
+				id: req.params.id
+			},
+			force: true
 		})
-		productsRemaining = JSON.stringify(productsRemaining)
-		fs.writeFileSync(productsFilePath, productsRemaining)		
-		res.redirect('../../..')
-	}
-};
+			.then(confirm => {
+				res.redirect('/')
+			})
+			.catch(e => console.log(e));
+	},
+	async categories (req, res) {
+		let where = {};
+		let products = [];
+		let title = "Todos los productos";
 
-module.exports = controller;
+		if (req.params.category) {
+			let category = await Category.findOne({
+				where: {
+				   name: req.params.category
+				},
+				include: ['products']
+			});
+			
+			title = req.params.category;
+			 
+			if (category) {
+				products = category.products
+			};
+		} else {
+			products = await Product.findAll(where);
+		}
+
+		let categories = await Category.findAll({
+			include: ['products']
+		});
+
+		return res.render('products/categories', { products, categories, title })
+	}
+}
